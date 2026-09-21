@@ -1,0 +1,21 @@
+# Codex project config for rl-wordle.
+#
+# Project intent lives in AGENTS.md, which Codex reads natively. This file only
+# enforces it. See AGENTS.md Rule 1: the default operating mode is `pair` —
+# read-only. The agent advises; the user writes the code.
+#
+# NOTE: Codex loads project-scoped `.codex/` layers only for TRUSTED projects.
+# If you haven't trusted this directory, these settings are skipped and you fall
+# back to ~/.codex/config.toml. Trust the project, or replicate this there.
+
+# Read-only filesystem access. Blocks edits, writes, and shell mutations.
+sandbox_mode = "read-only"
+
+# Equivalent guard via the permission-profile system (built-in profile).
+# Redundant with sandbox_mode on purpose — belt and braces.
+default_permissions = ":read-only"
+
+# Surface escalation requests to the user rather than silently proceeding.
+# Do NOT set "never" here: that would let the agent act without a checkpoint,
+# which is the opposite of what this project wants.
+approval_policy = "on-request"

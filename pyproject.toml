@@ -1,0 +1,9 @@
+[project]
+name = "rl-wordle"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "accelerate>=1.14.0",
+    "torch>=2.13.0",
+    "transformers>=5.14.1",
+]

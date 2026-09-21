@@ -1,0 +1,40 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "default_agent": "pair",
+  "permission": {
+    "edit": "deny",
+    "task": "ask",
+    "bash": {
+      "*": "ask",
+      "ls*": "allow",
+      "wc*": "allow",
+      "rg*": "allow",
+      "grep*": "allow",
+      "find*": "allow",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git show*": "allow",
+      "git blame*": "allow",
+      "ruff check*": "allow",
+      "ty check*": "allow",
+      "mv *": "deny",
+      "cp *": "deny",
+      "rm *": "deny",
+      "sed -i*": "deny",
+      "tee *": "deny",
+      "*>*": "deny",
+      "*--fix*": "deny",
+      "ruff format*": "deny",
+      "git add*": "deny",
+      "git commit*": "deny",
+      "git push*": "deny",
+      "git reset*": "deny",
+      "git checkout*": "deny",
+      "*pip install*": "deny",
+      "uv add*": "deny",
+      "uv sync*": "deny"
+    }
+  }
+}

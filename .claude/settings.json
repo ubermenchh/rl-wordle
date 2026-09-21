@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "plan",
+    "allow": [
+      "Read(**)",
+      "Glob(**)",
+      "Grep(**)",
+      "Bash(ls *)",
+      "Bash(wc *)",
+      "Bash(rg *)",
+      "Bash(find *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git blame *)",
+      "Bash(ruff check *)",
+      "Bash(ty check *)"
+    ],
+    "deny": [
+      "Edit(**)",
+      "Write(**)",
+      "NotebookEdit(**)",
+      "Bash(rm *)",
+      "Bash(mv *)",
+      "Bash(cp *)",
+      "Bash(sed -i *)",
+      "Bash(tee *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git reset *)",
+      "Bash(git checkout *)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)",
+      "Bash(ruff format *)",
+      "Bash(pip install *)",
+      "Bash(uv add *)",
+      "Bash(uv sync *)"
+    ]
+  }
+}
