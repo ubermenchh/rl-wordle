@@ -1,8 +1,8 @@
 """
 Prompt rendering: Game -> model-facing text, and parsing the model's reply.
 
-1. Everything letter-spaced. "C R A N E" is exactly 5 tokens on every candidate
-   tokenizer; "CRANE" fuses to 2 (['CR','ANE']). Wordle is per-letter reasoning,
+1. Everything letter-spaced. On Qwen3-0.6B "C R A N E" is 5 tokens; "CRANE" is
+   2 (['CR','ANE']). Measured 2026-09-21. Wordle is per-letter reasoning,
    so the model needs letters as addressable units.
 2. Constraints are pre-digested into plain English. A 0.6B should spend its
    capacity choosing a word, not re-deriving bookkeeping the env already has.
@@ -119,16 +119,16 @@ _FEWSHOT_SPECS = [
         ["CRANE", "SLIMY"],
         "PLUMB",
         "Slots 2 and 4 are fixed, so the shape is _ L _ M _. "
-        "A, C, E, I, N, R, S, Y are absent."
-        "PLUMNB has L in slot 2 and M in slot 4, and P, U, B are still allowed.",
+        "A, C, E, I, N, R, S, Y are absent. "
+        "PLUMB has L in slot 2 and M in slot 4, and P, U, B are still allowed.",
     ),
     (
         "DOUBT",
         ["BRING", "BLOAT"],
         "DOUBT",
         "Slot 5 is fixed as T. B and O must both appear, but B cannot be in "
-        "slot 1 and 0 cannot be in slot 3. "
-        "DOUBT puts 0 in slot 2 and B in slot 4, ends in T, and uses no absent letters.",
+        "slot 1 and O cannot be in slot 3. "
+        "DOUBT puts O in slot 2 and B in slot 4, ends in T, and uses no absent letters.",
     ),
 ]
 
@@ -158,6 +158,8 @@ def _test_fewshot_examples_are_valid():
         assert answer == secret, "examples must demonstrate a winning deduction"
         assert parse_guess(f"<guess>{answer}</guess>") == answer
         assert reason.strip()
+        assert answer in reason, (answer, reason)
+        assert "0" not in reason, reason
     assert len(fewshot_messages()) == 2 * len(_FEWSHOT_SPECS)
 
 def _test_spacing_is_per_letter():
