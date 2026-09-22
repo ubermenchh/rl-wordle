@@ -82,7 +82,7 @@ def parse_guess(text: str) -> str | None:
     matches = _GUESS_RE.findall(text)
     return matches[-1].upper() if matches else None
 
-_TAG_RE = re.compile(r"<guess\s*>\s*([A-Za-z]+)\s*</\s*guess\s*>", re.I)
+_TAG_RE = re.compile(r"<guess\s*>\s*([^<]+)\s*</\s*guess\s*>", re.I)
 
 def parse_tag(text: str) -> str | None:
     """Extract whatever is inside the guess tag, any length."""
