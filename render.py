@@ -9,9 +9,9 @@ Prompt rendering: Game -> model-facing text, and parsing the model's reply.
 """
 
 from __future__ import annotations
-from collections import Counter
 
 import re
+from collections import Counter
 
 from wordle import GREEN, GREY, WORD_LEN, YELLOW, Game, constraints_from
 
@@ -70,7 +70,7 @@ def render(game: Game) -> str:
         f"Make your next guess."
     )
 
-_GUESS_RE = re.compile(rf"<guess\s*>\s*([A-Za-z]{{{WORD_LEN}}})\s*</\s*guess\s*>", re.I)
+_GUESS_RE = re.compile(rf"<guess\s*>\s*([A-Za-z]{{{WORD_LEN}}})\s*</\s*guess\s*>", re.IGNORECASE)
 
 def parse_guess(text: str) -> str | None:
     """
@@ -82,7 +82,7 @@ def parse_guess(text: str) -> str | None:
     matches = _GUESS_RE.findall(text)
     return matches[-1].upper() if matches else None
 
-_TAG_RE = re.compile(r"<guess\s*>\s*([^<]+)\s*</\s*guess\s*>", re.I)
+_TAG_RE = re.compile(r"<guess\s*>\s*([^<]+)\s*</\s*guess\s*>", re.IGNORECASE)
 
 def parse_tag(text: str) -> str | None:
     """Extract whatever is inside the guess tag, any length."""
@@ -90,7 +90,7 @@ def parse_tag(text: str) -> str | None:
     return m[-1].upper() if m else None
 
 _SPACED_RE = re.compile(r"(?:\b[A-Za-z]\b[^A-Za-z]+){3,}\b[A-Za-z]\b")
-_LABELLED_RE = re.compile(r"guess\s*[:\-]?\s*([A-Za-z]{3,8})", re.I)
+_LABELLED_RE = re.compile(r"guess\s*[:\-]?\s*([A-Za-z]{3,8})", re.IGNORECASE)
 
 def parse_lenient(text: str) -> str | None:
     """
@@ -131,6 +131,7 @@ _FEWSHOT_SPECS = [
         "DOUBT puts O in slot 2 and B in slot 4, ends in T, and uses no absent letters.",
     ),
 ]
+FEWSHOT_SECRETS = [spec[0] for spec in _FEWSHOT_SPECS]
 
 def fewshot_messages() -> list[dict]:
     """Worked examples as alternating chat turns."""

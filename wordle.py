@@ -15,54 +15,16 @@ from __future__ import annotations
 import random
 import sys
 from collections import Counter
-from pathlib import Path
+from collections.abc import Collection
 from dataclasses import dataclass, field
+from pathlib import Path
 
 WORD_LEN = 5
 MAX_TURNS = 6
 GREEN, YELLOW, GREY = "=", "-", "."
 
-_ANSWERS_RAW = """
-about above abuse actor acute admit adopt adult after again agent agree ahead
-alarm album alert alike alive allow alone along alter among anger angle angry
-apart apple apply arena argue arise armed arrow aside asset audio avoid awake
-award aware badly baker basic beach began begin being below bench birth black
-blame blind block blood board boost booth bound brain brand bread break breed
-brief bring broad broke brown build built buyer cable carry catch cause chain
-chair chart chase cheap check chest chief child chose civil claim class clean
-clear click climb clock close coach coast could count court cover craft crane
-crash cream crime cross crowd crown curve cycle daily dance dated dealt death
-debut delay depth doing doubt dozen draft drama drawn dream dress drill drink
-drive drove dying eager early earth eight elite empty enemy enjoy enter entry
-equal error event every exact exist extra faith false fault fiber field fifth
-fifty fight final first fixed flash fleet floor fluid focus force forth forty
-forum found frame frank fraud fresh front fruit fully funny giant given glass
-globe going grace grade grand grant grass great green gross group grown guard
-guess guest guide happy harsh heart heavy hence horse hotel house human ideal
-image index inner input issue joint judge known label large laser later laugh
-layer learn lease least leave legal level light limit lives local logic loose
-lower lucky lunch lying magic major maker march match maybe mayor meant media
-metal might minor minus mixed model money month moral motor mount mouse mouth
-movie music never newly night noise north noted novel nurse occur ocean offer
-often order other ought paint panel paper party peace phase phone photo piece
-pilot pitch place plain plane plant plate point pound power press price pride
-prime print prior prize proof proud prove queen quick quiet quite radio raise
-range rapid ratio reach ready refer right rival river rough round route royal
-rural scale scene scope score sense serve seven shall shape share sharp sheet
-shelf shell shift shirt shock shoot short shown sight since sixth sixty sized
-skill slate sleep slide small smart smile smoke solid solve sorry sound south
-space spare speak speed spend spent split spoke sport staff stage stake stand
-start state steam steel stick still stock stone stood store storm story strip
-stuck study stuff style sugar suite super sweet table taken taste teach teeth
-thank theft their theme there these thick thing think third those three threw
-throw tight times tired title today topic total touch tough tower track trade
-train treat trend trial tried truck truly trust truth twice under union unity
-until upper upset urban usage usual valid value video virus visit vital voice
-waste watch water wheel where which while white whole whose woman women world
-worry worse worst worth would wound write wrong wrote yield young youth
-"""
-
-ANSWERS: list[str] = sorted({w.upper() for w in _ANSWERS_RAW.split()})
+_ANSWERS_FILE = Path(__file__).with_name("answers.txt")
+ANSWERS: list[str] = sorted({w.strip().upper() for w in _ANSWERS_FILE.read_text().split()})
 
 _SYSTEM_DICT = Path("/usr/share/dict/words")
 
@@ -142,7 +104,7 @@ class Game:
         return len(self.guesses)
 
     def history(self) -> list[tuple[str, str]]:
-        return list(zip(self.guesses, self.feedback))
+        return list(zip(self.guesses, self.feedback, strict=True))
 
     def validate(self, guess: str) -> str:
         g = guess.strip().upper()
@@ -196,7 +158,7 @@ def constraints_from(game: Game) -> Constraints:
     c = Constraints()
     for g, fb in game.history():
         seen = Counter()
-        for i, (ch, sym) in enumerate(zip(g, fb)):
+        for i, (ch, sym) in enumerate(zip(g, fb, strict=True)):
             if sym == GREEN:
                 c.fixed[i] = ch
                 seen[ch] += 1
@@ -265,10 +227,26 @@ def sample_state(
         g.guess(rng.choice(pool))
     return g
 
+def split_answers(seed: int = 0, eval_frac: float = 0.2, reserved: Collection[str] = ()) -> tuple[list[str], list[str]]:
+    """Partition ANSWERS into (train, eval) secrets"""
+    if not 0.0 < eval_frac < 1.0:
+        raise ValueError(f"eval_frac must be in (0, 1), got {eval_frac}")
+    unknown = set(reserved) - set(ANSWERS)
+    if unknown:
+        raise ValueError(f"reserved words not in ANSWERS: {sorted(unknown)}")
+
+    pool = [w for w in ANSWERS if w not in set(reserved)]
+    n_eval = round(eval_frac * len(ANSWERS))
+
+    ev = random.Random(seed).sample(pool, n_eval)
+    ev_set = set(ev)
+    train = [w for w in ANSWERS if w not in ev_set]
+    return train, sorted(ev)
+
 def _test_word_lists():
     bad = [w for w in ANSWERS if len(w) != WORD_LEN or not w.isalpha()]
     assert not bad, bad
-    assert len(ANSWERS) > 300, len(ANSWERS)
+    assert len(ANSWERS) > 800, len(ANSWERS)
     assert ANSWERS == sorted(set(ANSWERS)), "answers must be unique and sorted"
     assert set(ANSWERS) <= ALLOWED, "every answer must be a legal guess"
     assert len(ALLOWED) > 5000, len(ALLOWED)

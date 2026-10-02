@@ -7,3 +7,19 @@ dependencies = [
     "torch>=2.13.0",
     "transformers>=5.14.1",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+# E/F: pycodestyle + pyflakes, I: import order, B: likely bugs.
+# Explicit so the baseline doesn't shift with ruff's defaults.
+select = ["E", "F", "I", "B"]
+ignore = ["E701", "E702", "E501"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.10",
+    "ty>=0.0.84",
+]

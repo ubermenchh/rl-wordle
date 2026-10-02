@@ -11,24 +11,34 @@ there.
 """
 
 from __future__ import annotations
-from statistics import mean
 
 import argparse
 import random
+from statistics import mean
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from render import SYSTEM, parse_tag, render, parse_lenient, fewshot_messages
-from wordle import ALLOWED, ANSWERS, constraints_from, is_consistent, sample_state, WORD_LEN
 from constrained import sample_words
+from render import FEWSHOT_SECRETS, SYSTEM, fewshot_messages, parse_lenient, parse_tag, render
+from reward import reward
+from wordle import (
+    ALLOWED,
+    ANSWERS,
+    WORD_LEN,
+    Game,
+    constraints_from,
+    is_consistent,
+    sample_state,
+    split_answers,
+)
 
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
 
 def load(model_id: str):
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     model = AutoModelForCausalLM.from_pretrained(model_id, dtype="auto")
-    model.to(DEVICE)
+    model.to(DEVICE) # ty: ignore[invalid-argument-type]
     model.eval()
     return tokenizer, model
 
@@ -70,6 +80,22 @@ def sample_k(tokenizer, model, prompt: str, k: int, temp: float, max_new: int) -
     gen = out[:, ids["input_ids"].shape[1]:]
     return tokenizer.batch_decode(gen, skip_special_tokens=True)
 
+def group_signal(texts: list[str], game: Game) -> dict:
+    scored = [reward(t, game) for t in texts]
+    rewards = [r for r, _ in scored]
+    kinds = [kind for _, kind in scored]
+
+    solved = kinds.count("solved")
+    n_consistent = sum(kind in ("consistent", "solved") for kind in kinds)
+
+    return {
+        "rewards": rewards,
+        "solved": solved,
+        "nondegen_solved": 0 < solved < len(texts),
+        "nondegen_reward": len(set(rewards)) > 1,
+        "nondegen_consistent": 0 < n_consistent < len(texts),
+    }
+
 def gate(
     model_id: str,
     max_prior: int,
@@ -86,13 +112,16 @@ def gate(
     if tokenizer is None:
         tokenizer, model = load(model_id)
     rng = random.Random(seed)
-    
-    tagged = len5 = valid = consistent = repeat = solved = total = 0
+    _, eval_words = split_answers(reserved=[w for w in FEWSHOT_SECRETS if w in ANSWERS])
+
+    tagged = len5 = valid = consistent = repeat = solved = total = used = 0
     nondegen = 0
+    nd_reward = nd_consist = 0
 
     for _ in range(n_states):
-        g = sample_state(max_prior, rng)
+        g = sample_state(max_prior, rng, secret=rng.choice(eval_words))
         c = constraints_from(g)
+        used += g.turns_used
 
         if constrained:
             pool = [w for w in ANSWERS if w not in g.guesses]
@@ -103,6 +132,10 @@ def gate(
         else:
             texts = sample_k(tokenizer, model,
                              build_prompt(tokenizer, render(g), fewshot), k, temp, max_new)
+
+        sig = group_signal(texts, g)
+        nd_reward += sig["nondegen_reward"]
+        nd_consist += sig["nondegen_consistent"]
 
         hits = 0
         for t in texts:
@@ -137,6 +170,9 @@ def gate(
         "consistent": consistent / total,
         "solve": solved / total,
         "nondegen": nondegen / n_states,
+        "nd_reward": nd_reward / n_states,
+        "nd_consist": nd_consist / n_states,
+        "n_used": used / n_states,
     }
 
 def summarize(model_id: str, args) -> dict:
@@ -165,6 +201,8 @@ def summarize(model_id: str, args) -> dict:
         "consist": mean(r["consistent"] for r in con),
         "solve34": mean(r["solve"] for r in deep),
         "ndgn34": mean(r["nondegen"] for r in deep),
+        "ndrw": mean(r["nd_reward"] for r in con),
+        "ndcn": mean(r["nd_consist"] for r in con),
     }
 
 def main():
@@ -181,7 +219,7 @@ def main():
     args = p.parse_args()
 
     if args.sweep:
-        cols = ("tag", "len5", "valid", "repeat", "consist", "solve34", "ndgn34")
+        cols = ("tag", "len5", "valid", "repeat", "consist", "solve34", "ndgn34", "ndrw", "ndcn")
         print(f"on {DEVICE} k={args.k} temp={args.temp} states={args.n_states}")
         print(" ".join(["model".ljust(24)] + [c.rjust(8) for c in cols]))
         print("-" * (24 + 10 * len(cols)))
@@ -203,7 +241,7 @@ def main():
           f"states={args.n_states} fewshot={args.fewshot} "
           f"constrained={args.constrained} prompt_tokens={len(tokenizer(probe).input_ids)}")
 
-    cols = ("tag", "len5", "valid", "repeat", "consistent", "solve", "nondegen")
+    cols = ("tag", "len5", "valid", "repeat", "consistent", "solve", "nondegen", "nd_reward", "nd_consist")
     print(" ".join(h.rjust(9) for h in ("prior",) + cols))
     print("-" * (10 * (len(cols) + 1)))
     for n in range(5):
@@ -214,4 +252,3 @@ def main():
 
 if __name__=="__main__":
     main()
-

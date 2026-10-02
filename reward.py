@@ -9,17 +9,20 @@ The turn bonus is constant within a group in single-turn training and cancels
 under RLOO; it only matters from task 11 on.
 """
 
-import sys
 import random
+import sys
+from itertools import pairwise
+
+from render import parse_tag
 from wordle import (
+    ANSWERS,
     Game,
     InvalidGuess,
     constraints_from,
     is_consistent,
     sample_state,
-    ANSWERS,
 )
-from render import parse_tag
+
 
 def reward(text: str, game: Game) -> tuple[float, str]:
     tag = parse_tag(text)
@@ -48,7 +51,7 @@ def _test_reward_ladder():
     r4 = reward("<guess>CRANE</guess>", g)
 
     vals = [r[0] for r in (r0, r1, r2, r3, r4)]
-    for a, b in zip(vals, vals[1:]): assert a < b, vals
+    for a, b in pairwise(vals): assert a < b, vals
     assert [r[1] for r in (r0, r1, r2, r3, r4)] == ["format", "not_a_word", "valid", "consistent", "solved"], (r0, r1, r2, r3, r4)
 
 def _test_format_failures_are_worst():

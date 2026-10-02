@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import random
 from collections import Counter
-from typing import Callable, Protocol
+from collections.abc import Callable
+from typing import Protocol
 
 from wordle import (
     ALLOWED,

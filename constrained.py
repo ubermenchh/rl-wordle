@@ -81,6 +81,7 @@ def _test_trie_covers_pool():
     from wordle import ANSWERS
 
     tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
+    assert tok is not None
     pool = ANSWERS[:200]
     trie = build_trie(tok, pool)
     for w in pool:
