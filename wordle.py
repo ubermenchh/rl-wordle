@@ -26,21 +26,21 @@ GREEN, YELLOW, GREY = "=", "-", "."
 _ANSWERS_FILE = Path(__file__).with_name("answers.txt")
 ANSWERS: list[str] = sorted({w.strip().upper() for w in _ANSWERS_FILE.read_text().split()})
 
-_SYSTEM_DICT = Path("/usr/share/dict/words")
+_ALLOWED_FILE = Path(__file__).with_name("allowed.txt")
 
 def load_allowed(extra: list[str] | None = None) -> set[str]:
-    """"Allowed guesses: system dictionary filtered to 5 letters, plus all answers."""
-    allowed = set(ANSWERS)
-    if _SYSTEM_DICT.exists():
-        for w in _SYSTEM_DICT.read_text(errors="ignore").split():
-            if len(w) == WORD_LEN and w.isalpha() and w.islower():
-                allowed.add(w.upper())
+    """"Allowed guesses: every word in allowed.txt, plus all answers."""
+    if not _ALLOWED_FILE.exists():
+        raise FileNotFoundError(f"{_ALLOWED_FILE} is missing; every result depends on it")
 
+    allowed = set(ANSWERS)
+    allowed.update(w.upper() for w in _ALLOWED_FILE.read_text().split())
     allowed.update(w.upper() for w in extra or [])
     return allowed
 
 
 ALLOWED: set[str] = load_allowed()
+_ALLOWED_SORTED: list[str] = sorted(ALLOWED)
 
 def score(guess: str, secret: str) -> str:
     """
@@ -214,7 +214,7 @@ def sample_state(
     g = Game(secret or rng.choice(ANSWERS))
     for _ in range(n_prior):
         if rng.random() < noise:
-            pool = [w for w in ALLOWED if w != g.secret and w not in g.guesses]
+            pool = [w for w in _ALLOWED_SORTED if w != g.secret and w not in g.guesses]
         else:
             c = constraints_from(g)
             pool = [
