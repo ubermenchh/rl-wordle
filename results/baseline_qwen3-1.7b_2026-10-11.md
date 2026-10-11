@@ -36,3 +36,22 @@ What it means:
 - Almost all rewards are equal (0.0), so a group has no signal. RL from this model learns nothing (`AGENTS.md`, Rule 5, sink 2). SFT must come first (Mark II).
 - Not measured: a run with thinking on, and other temperatures.
 - The `PrimeIntellect/Qwen3-1.7B` clone always thinks (its `chat_template.jinja` has no `enable_thinking`), so it is not used here (`.jarvis/DECISIONS.md`, 2026-10-11).
+
+## Second measurement: Modal A100, prime-rl `eval` (same day)
+
+Same model, same game, same sampling (temperature 1.0, 256 tokens, thinking off through `sampling.extra_body.chat_template_kwargs`).
+Run through prime-rl's env servers on 2 x A100-80GB, vLLM and router (`modal_prime_rl.py::spike --stage eval`, run `spike-wordle-baseline-1011-110208`,
+config `configs/wordle_eval.toml`, which does not set the harness or the runtime). 100 episodes, 0 errors.
+
+| Measure | Mac (`vf-eval`) | A100 (`prime-rl eval`) |
+|---|---|---|
+| Wins | 0 | 0 |
+| Games ended on an illegal reply | 98 | 99 |
+| Mean reward (`ladder`) | 0.002 | 0.001 |
+| Outcomes: not_a_word / repeat / bad_length / not_alpha / lost | 54 / 31 / 9 / 4 / 2 | 48 / 39 / 10 / 2 / 1 |
+| Format errors | 0 | 0 |
+| Mean output tokens per episode | not measured | 10.6 |
+
+The two paths agree within the noise of 100 games. The 0-prior games are identical in both (13 not_a_word, 3 bad_length), so both runs saw the same tasks.
+`enable_thinking: false` reached vLLM (replies of about 10 tokens, no truncation).
+This also shows that our taskset, env, reward and metrics run unchanged under prime-rl on Python 3.12.
