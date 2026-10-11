@@ -97,6 +97,12 @@ image = (
     )
     # LAST on purpose: these change on every edit and must not rebuild the layers above.
     .add_local_file("configs/wordle_eval.toml", f"{APP_DIR}/wordle_eval.toml")
+    .add_local_file("configs/wordle_eval_heldout.toml", f"{APP_DIR}/wordle_eval_heldout.toml")
+    .add_local_file("configs/wordle_eval_heldout_400.toml", f"{APP_DIR}/wordle_eval_heldout_400.toml")
+    .add_local_file("configs/wordle_rl.toml", f"{APP_DIR}/wordle_rl.toml")
+    .add_local_file("configs/wordle_sft.toml", f"{APP_DIR}/wordle_sft.toml")
+    # The SFT set (uv run python -m sft.export_prime_rl). About 2 MB, so it ships with the image.
+    .add_local_dir("data/sft_wordle", f"{APP_DIR}/sft_data")
 )
 
 
@@ -201,6 +207,58 @@ def check() -> None:
             "assert all(found.values()), [n for n, p in found.items() if not p]",
         ]
     )
+    # 5c. The SFT data loads as the train split, and the renderer of prime-rl gives the trained
+    # tokens that we expect (the wrapper, the reasoning line, the tag).
+    _run(
+        [
+            f"{BIN}/python",
+            "-c",
+            "from datasets import load_dataset;"
+            "from transformers import AutoTokenizer;"
+            "from renderers import Qwen3RendererConfig;"
+            "from renderers.base import build_training_sample, create_renderer;"
+            "ds = load_dataset('/app/sft_data', split='train');"
+            "print('sft rows', len(ds), 'columns', ds.column_names);"
+            "assert len(ds) == 2000 and ds.column_names == ['messages'];"
+            "tok = AutoTokenizer.from_pretrained('Qwen/Qwen3-1.7B');"
+            "r = create_renderer(tok, Qwen3RendererConfig(enable_thinking=False));"
+            "s = build_training_sample(r, ds[0]['messages'], ensure_final_stop=True);"
+            "t = [i for i, k in zip(s.token_ids, s.loss_mask) if k];"
+            "print('tokens', len(s.token_ids), 'trained', len(t), repr(tok.decode(t)[:120]))",
+        ]
+    )
+    # 5d. The SFT config. We do not know if `sft` has a dry run, so a failure is printed and does
+    # not stop the check.
+    print("\n$ sft @ wordle_sft.toml --dry-run", flush=True)
+    subprocess.run(
+        [f"{BIN}/sft", "@", f"{APP_DIR}/wordle_sft.toml", "--dry-run", "--run.name", "dry-sft"],
+        cwd=APP_DIR,
+        env=_env(),
+        check=False,
+    )
+    # 5e. The RL config. A model on the Hub stands in for the SFT weights, which are on the Volume.
+    print("\n$ rl @ wordle_rl.toml --dry-run", flush=True)
+    subprocess.run(
+        [
+            f"{BIN}/rl",
+            "@",
+            f"{APP_DIR}/wordle_rl.toml",
+            "--dry-run",
+            "--run.name",
+            "dry-rl",
+            "--model.name",
+            MODEL,
+            "--max-steps",
+            "100",
+            "--orchestrator.eval.interval",
+            "10",
+            "--ckpt.interval",
+            "25",
+        ],
+        cwd=APP_DIR,
+        env=_env(),
+        check=False,
+    )
     # 6. The eval config is valid. --dry-run resolves and writes the config, then exits (the help
     # of `eval`, 2026-10-11). A wrong key, for example in sampling.extra_body, fails here, on
     # the CPU, and not after vLLM has started on two GPUs.
@@ -281,6 +339,48 @@ def _start_dashboard(env: dict) -> list[subprocess.Popen]:
     return processes
 
 
+@contextlib.contextmanager
+def _session(hold_min: int):
+    """Set up a GPU run, and give its environment to the body: the GPUs are shown, the outputs
+    folder is the Volume, and the dashboard and its tunnel are up. After a good run the container
+    stays open for `hold_min` minutes. After a failed run it stops at once (about $0.08 a minute
+    per 2 GPUs): the first smoke run failed in 20 seconds and would have held 5 minutes."""
+    env = _env()
+    env["HF_HOME"] = f"{OUT}/hf"  # Model weights land on the Volume: the next run skips them.
+    env["WANDB_PROJECT"] = "rl-wordle"
+
+    _run(["nvidia-smi", "-L"], env)
+    _run(
+        [
+            f"{BIN}/python",
+            "-c",
+            "import torch;"
+            "print('torch', torch.__version__, 'cuda', torch.version.cuda,"
+            " 'gpus', torch.cuda.device_count(), torch.cuda.get_device_name(0))",
+        ],
+        env,
+    )
+    # prime-rl writes to outputs/<run name>. Point that folder at the Volume.
+    if not os.path.exists(f"{APP_DIR}/outputs"):
+        os.symlink(OUT, f"{APP_DIR}/outputs")
+
+    side_processes = _start_dashboard(env)
+    try:
+        with modal.forward(RELAY_PORT) as tunnel:
+            print(f"\n>>> DASHBOARD: {tunnel.url}\n>>> W&B: project rl-wordle\n", flush=True)
+            try:
+                yield env
+            except BaseException:
+                vol.commit()  # The run folders must reach the Volume also after a failure.
+                raise
+            vol.commit()
+            print(f"\nDone. The dashboard stays open for {hold_min} min: {tunnel.url}")
+            time.sleep(hold_min * 60)
+    finally:
+        for process in side_processes:
+            process.terminate()
+
+
 @app.function(
     image=image,
     gpu="A100-80GB:2",
@@ -296,51 +396,51 @@ def spike(stage: str = "smoke", hold_min: int = 5) -> None:
     stage "smoke": the prime-rl smoke test (reverse-text).
     stage "eval":  the baseline eval of our taskset.
     hold_min: minutes to keep the container open after the run, to look at the dashboard.
-              Each minute costs about $0.08.
     """
-    env = _env()
-    env["HF_HOME"] = f"{OUT}/hf"  # Model weights land on the Volume: the next run skips them.
-    env["WANDB_PROJECT"] = "rl-wordle"
+    with _session(hold_min) as env:
+        if stage == "smoke":
+            _smoke(env)
+        elif stage == "eval":
+            _eval(env)
+        else:
+            raise ValueError(f"unknown stage {stage!r}: use smoke or eval")
 
-    # 1. What did we get? The GPUs and the driver.
-    _run(["nvidia-smi", "-L"], env)
-    _run(
-        [
-            f"{BIN}/python",
-            "-c",
-            "import torch;"
-            "print('torch', torch.__version__, 'cuda', torch.version.cuda,"
-            " 'gpus', torch.cuda.device_count(), torch.cuda.get_device_name(0))",
-        ],
-        env,
-    )
 
-    # 2. prime-rl writes to outputs/<run name>. Point that folder at the Volume.
-    if not os.path.exists(f"{APP_DIR}/outputs"):
-        os.symlink(OUT, f"{APP_DIR}/outputs")
+@app.function(
+    image=image,
+    gpu="A100-80GB",  # One GPU: the SFT trainer does not need vLLM. $2.50 an hour at list price.
+    volumes={OUT: vol},
+    secrets=[wandb_secret],
+    timeout=3600,  # The cost cap: about $2.50.
+)
+def sft_run(max_steps: int = 0, ckpt_interval: int = 0, hold_min: int = 3) -> None:
+    """Mark II: SFT of the stock Qwen3-1.7B on our solver traces (configs/wordle_sft.toml).
 
-    side_processes = _start_dashboard(env)
-    try:
-        with modal.forward(RELAY_PORT) as tunnel:
-            print(f"\n>>> DASHBOARD: {tunnel.url}\n>>> W&B: project rl-wordle\n", flush=True)
-            try:
-                if stage == "smoke":
-                    _smoke(env)
-                elif stage == "eval":
-                    _eval(env)
-                else:
-                    raise ValueError(f"unknown stage {stage!r}: use smoke or eval")
-            except BaseException:
-                # A failed run must not hold 2 GPUs open (about $0.08 a minute): the first smoke
-                # run failed in 20 seconds and would have held the container for 5 minutes.
-                vol.commit()
-                raise
-            vol.commit()
-            print(f"\nDone. The dashboard stays open for {hold_min} min: {tunnel.url}")
-            time.sleep(hold_min * 60)
-    finally:
-        for process in side_processes:
-            process.terminate()
+    max_steps: 0 keeps the config (62 steps, about 7 epochs: a batch is 64 packed sequences of 1,024
+               tokens, about 220 rows, so an epoch is about 9 steps). Otherwise it replaces it.
+    ckpt_interval: 0 saves only the last step. Otherwise it saves each N steps, so that we can
+               choose the number of epochs with held-out evals.
+    """
+    with _session(hold_min) as env:
+        name = _run_name("sft-wordle")
+        print(f">>> RUN NAME (W&B and the dashboard): {name}", flush=True)
+        command = [
+            f"{BIN}/sft",
+            "@",
+            f"{APP_DIR}/wordle_sft.toml",
+            "--monitors.wandb.project",
+            "rl-wordle",
+            "--monitors.wandb.name",
+            name,
+            "--run.name",
+            name,
+        ]
+        if max_steps:
+            command += ["--max-steps", str(max_steps)]
+        if ckpt_interval:
+            command += ["--ckpt.interval", str(ckpt_interval)]
+        with _stream_logs(name):
+            _run(command, env)
 
 
 def _smoke(env: dict) -> None:
@@ -365,23 +465,28 @@ def _smoke(env: dict) -> None:
         )
 
 
-def _eval(env: dict) -> None:
-    """vLLM on GPU 0, and the eval of prime-rl against it, on our taskset."""
+def _eval(
+    env: dict, model: str = MODEL, name_base: str = "spike-wordle-baseline", config: str = "wordle_eval.toml"
+) -> None:
+    """vLLM on GPU 0, and the eval of prime-rl against it, on our taskset. `model` is a Hub id or
+    a folder with HF weights. vLLM serves it under that same string, and `eval -m` uses it."""
     server = subprocess.Popen(
-        [f"{BIN}/inference", "--vllm.model", MODEL],
+        [f"{BIN}/inference", "--vllm.model", model],
         cwd=APP_DIR,
         env={**env, "CUDA_VISIBLE_DEVICES": "0"},
     )
     try:
         _wait_for("http://localhost:8000/v1/models", server, timeout_s=900)
-        name = _run_name("spike-wordle-baseline")
+        name = _run_name(name_base)
         print(f">>> RUN NAME (W&B and the dashboard): {name}", flush=True)
         with _stream_logs(name):
             _run(
                 [
                     f"{BIN}/eval",
                     "@",
-                    f"{APP_DIR}/wordle_eval.toml",
+                    f"{APP_DIR}/{config}",
+                    "-m",
+                    model,
                     "--run.name",
                     name,
                     "--monitors.wandb.project",
@@ -393,3 +498,94 @@ def _eval(env: dict) -> None:
             )
     finally:
         server.terminate()
+
+
+@app.function(
+    image=image,
+    gpu="A100-80GB",  # The eval uses one GPU for vLLM. $2.50 an hour at list price.
+    volumes={OUT: vol},
+    secrets=[wandb_secret],
+    timeout=1800,  # The cost cap: 30 minutes, about $1.5 (the credit left was $4.45 on 2026-10-11).
+)
+def eval_run(ckpt_run: str, step: int, split: str = "eval", games: int = 100, hold_min: int = 3) -> None:
+    """Eval of an SFT checkpoint on our taskset (the same 100 games as the baseline).
+
+    ckpt_run: the run folder on the Volume, for example sft-wordle-1011-113953.
+    step: the step of the checkpoint, for example 62.
+    split: "eval" (held-out secrets, the default) or "train". The first SFT eval used the train
+           split by mistake (2026-10-11), so its numbers are in-distribution.
+    games: 100 (the default) or 400. 400 narrows the noise of the win count (about +-3 points).
+    The checkpoint is saved in the DCP format. tools/convert_dcp_to_bf16.py of prime-rl writes the
+    HF weights to <checkpoint>/weights (docs/training.md), and vLLM loads that folder.
+    """
+    ckpt = f"{OUT}/{ckpt_run}/checkpoints/step_{step}"
+    with _session(hold_min) as env:
+        if not os.path.exists(f"{ckpt}/weights"):
+            _run([f"{BIN}/python", "tools/convert_dcp_to_bf16.py", ckpt], env)
+            vol.commit()  # The weights stay on the Volume for the next eval and for Mark III.
+        if split not in ("eval", "train"):
+            raise ValueError(f"split must be eval or train, not {split!r}")
+        if games not in (100, 400) or (split == "train" and games != 100):
+            raise ValueError("games is 100 or 400, and 400 exists for the eval split only")
+        config = "wordle_eval.toml" if split == "train" else {100: "wordle_eval_heldout.toml", 400: "wordle_eval_heldout_400.toml"}[games]
+        _eval(env, model=f"{ckpt}/weights", name_base=f"eval-{split}-{ckpt_run}", config=config)
+
+
+@app.function(
+    image=image,
+    gpu="A100-80GB:2",
+    volumes={OUT: vol},
+    secrets=[wandb_secret],
+    # The cost cap: 80 minutes of 2 GPUs. The real bill of the first RL run was $4.46 for 48
+    # minutes ($0.093 a minute: the A100 price plus about 16% for CPU and memory), so the cap is
+    # about $7.5. It must stay below the credit that is left (2026-10-11: $11.62).
+    timeout=4800,
+)
+def rl_run(
+    ckpt_run: str,
+    step: int,
+    max_steps: int = 0,
+    eval_interval: int = 0,
+    ckpt_interval: int = 0,
+    resume_run: str = "",
+    hold_min: int = 3,
+) -> None:
+    """Mark III: RL on our taskset (configs/wordle_rl.toml), from an SFT checkpoint.
+
+    ckpt_run, step: the SFT checkpoint on the Volume. Its HF weights are at <checkpoint>/weights
+                    (made by eval_run).
+    max_steps: 0 keeps the value of the config (30). Otherwise it replaces it.
+    eval_interval: 0 keeps the config (an eval each 5 steps). Each eval of 100 games takes 1 to 2 minutes.
+    ckpt_interval: 0 keeps the config (15). A checkpoint of the trainer is large, so use 25 or more.
+    resume_run: the name of an earlier RL run on the Volume, for example rl-wordle-1011-131936. The
+                run continues from its last checkpoint (the same run folder, so the same name), and
+                max_steps is the TOTAL number of steps, not the number of new steps. prime-rl asks
+                for `--resume` when a run folder has files from a run (FileExistsError, 2026-10-11).
+    """
+    weights = f"{OUT}/{ckpt_run}/checkpoints/step_{step}/weights"
+    with _session(hold_min) as env:
+        if not os.path.exists(weights):
+            raise FileNotFoundError(f"{weights} is missing: run eval_run for this checkpoint first")
+        name = resume_run or _run_name("rl-wordle")
+        print(f">>> RUN NAME (W&B and the dashboard): {name}\n>>> MODEL: {weights}", flush=True)
+        command = [
+            f"{BIN}/rl",
+            "@",
+            f"{APP_DIR}/wordle_rl.toml",
+            "--model.name",
+            weights,
+            "--monitors.wandb.name",
+            f"{name}-resumed" if resume_run else name,
+            "--run.name",
+            name,
+        ]
+        if resume_run:
+            command += ["--resume"]
+        if max_steps:
+            command += ["--max-steps", str(max_steps)]
+        if eval_interval:
+            command += ["--orchestrator.eval.interval", str(eval_interval)]
+        if ckpt_interval:
+            command += ["--ckpt.interval", str(ckpt_interval)]
+        with _stream_logs(name):
+            _run(command, env)

@@ -1,0 +1,29 @@
+# HELD-OUT eval: the same as wordle_eval.toml, but the secrets come from the eval split (the 20% of answers that SFT and RL never use as a secret).
+# Same game, same metrics as the Mac run in results/baseline_qwen3-1.7b_2026-10-11.md, so the
+# two numbers can be compared. The inference server is started by modal_prime_rl.py.
+#
+# We do NOT set env.player.harness or env.player.runtime: WordleEnvConfig has the null harness
+# and the subprocess runtime as its default (tests/test_env.py). If this run works without those
+# lines, the defaults work under prime-rl too.
+
+model = "Qwen/Qwen3-1.7B"
+group_size = 1
+
+[select]
+limit = 400
+
+[client]
+base_url = "http://localhost:8000/v1"
+
+[sampling]
+temperature = 1.0
+max_completion_tokens = 256
+
+# Thinking off, as in the Mac run. The server reads this per request.
+[sampling.extra_body.chat_template_kwargs]
+enable_thinking = false
+
+[[source]]
+name = "wordle-rl"
+env.taskset.id = "wordle-rl"
+env.taskset.split = "eval"   # The only difference from wordle_eval.toml.
