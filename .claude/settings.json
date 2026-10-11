@@ -33,7 +33,11 @@
       "Write(/.jarvis/**)",
       "Write(/results/**)",
       "Write(/modal_app.py)",
-      "Write(/.github/**)"
+      "Write(/.github/**)",
+      "Edit(/sft/gen_traces.py)",
+      "Write(/sft/gen_traces.py)",
+      "Edit(/data/**)",
+      "Write(/data/**)",
     ],
     "deny": [
       "Edit(/wordle.py)",
@@ -52,6 +56,10 @@
       "Write(/rl/**)",
       "Edit(/answers.txt)",
       "Write(/answers.txt)",
+      "Edit(/sft/teacher.py)",
+      "Write(/sft/teacher.py)",
+      "Edit(/sft/train_sft.py)",
+      "Write(/sft/train_sft.py)",
       "NotebookEdit(**)",
 
       "Bash(rm *)",

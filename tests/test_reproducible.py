@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # noise=1.0 forces every prior down the ALLOWED-pool path, the one that used to iterate a set.
 CODE = """
 import random
-from wordle import sample_state
+from wordle_rl.wordle import sample_state
 rng = random.Random(0)
 for n in (1, 2, 3, 4):
     for _ in range(40):

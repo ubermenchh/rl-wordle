@@ -14,7 +14,7 @@ from collections import Counter
 from collections.abc import Callable
 from typing import Protocol
 
-from wordle import (
+from wordle_rl.wordle import (
     ALLOWED,
     ANSWERS,
     Game,

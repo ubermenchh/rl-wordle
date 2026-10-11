@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from wordle import GREEN, GREY, WORD_LEN, YELLOW, Game, constraints_from
+from wordle_rl.wordle import GREEN, GREY, WORD_LEN, YELLOW, Game, constraints_from
 
 SYSTEM = f"""You are playing Wordle. Guess the secret {WORD_LEN}-letter word.
 
@@ -135,7 +135,7 @@ FEWSHOT_SECRETS = [spec[0] for spec in _FEWSHOT_SPECS]
 
 def fewshot_messages() -> list[dict]:
     """Worked examples as alternating chat turns."""
-    from wordle import Game
+    from wordle_rl.wordle import Game
 
     out = []
     for secret, priors, answer, reason in _FEWSHOT_SPECS:
@@ -147,7 +147,7 @@ def fewshot_messages() -> list[dict]:
     return out
 
 def _test_fewshot_examples_are_valid():
-    from wordle import ALLOWED, Game, constraints_from, is_consistent
+    from wordle_rl.wordle import ALLOWED, Game, constraints_from, is_consistent
 
     for secret, priors, answer, reason in _FEWSHOT_SPECS:
         assert answer in ALLOWED, answer
@@ -180,7 +180,7 @@ def _test_parse_guess():
 def _test_render_roundtrip():
     import random
 
-    from wordle import sample_state
+    from wordle_rl.wordle import sample_state
 
     rng = random.Random(0)
     for _ in range(50):
@@ -195,7 +195,7 @@ def _test_render_roundtrip():
 def _test_summary_is_not_self_contradictory():
     import random
 
-    from wordle import is_consistent, sample_state
+    from wordle_rl.wordle import is_consistent, sample_state
 
     rng = random.Random(0)
     for _ in range(200):
@@ -221,7 +221,7 @@ if __name__ == "__main__":
     import random
     import sys
 
-    from wordle import sample_state
+    from wordle_rl.wordle import sample_state
 
     if len(sys.argv) > 1 and sys.argv[1] == "test":
         run_tests()

@@ -20,9 +20,16 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from constrained import sample_words
-from render import FEWSHOT_SECRETS, SYSTEM, fewshot_messages, parse_lenient, parse_tag, render
-from reward import reward
-from wordle import (
+from wordle_rl.render import (
+    FEWSHOT_SECRETS,
+    SYSTEM,
+    fewshot_messages,
+    parse_lenient,
+    parse_tag,
+    render,
+)
+from wordle_rl.reward import reward
+from wordle_rl.wordle import (
     ALLOWED,
     ANSWERS,
     WORD_LEN,
@@ -33,7 +40,11 @@ from wordle import (
     split_answers,
 )
 
-DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
+DEVICE = (
+    "cuda" if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available()
+    else "cpu"
+)
 
 def load(model_id: str):
     tokenizer = AutoTokenizer.from_pretrained(model_id)
@@ -114,6 +125,11 @@ def gate(
     rng = random.Random(seed)
     _, eval_words = split_answers(reserved=[w for w in FEWSHOT_SECRETS if w in ANSWERS])
 
+    examples = {
+        "missing_tag": [],
+        "wrong_length": [],
+        "not_allowed": [],
+    }
     tagged = len5 = valid = consistent = repeat = solved = total = used = 0
     nondegen = 0
     nd_reward = nd_consist = 0
@@ -124,7 +140,7 @@ def gate(
         used += g.turns_used
 
         if constrained:
-            pool = [w for w in ANSWERS if w not in g.guesses]
+            pool = [w for w in sorted(ALLOWED) if w not in g.guesses]
             words = sample_words(tokenizer, model,
                                  build_prompt(tokenizer, render(g), fewshot) + "<guess>",
                                  pool, k, temp)
@@ -140,12 +156,29 @@ def gate(
         hits = 0
         for t in texts:
             total += 1
-            if parse_tag(t) is not None:
+            tag = parse_tag(t)
+            if tag is not None:
                 tagged += 1
+
             raw = parse_lenient(t)
-            if raw is None:
-                continue
-            if len(raw) != WORD_LEN:
+
+            if tag is None:
+                kind = "missing_tag"
+            elif raw is None or len(raw) != WORD_LEN:
+                kind = "wrong_length"
+            elif raw not in ALLOWED:
+                kind = "not_allowed"
+            else:
+                kind = None
+
+            if kind is not None and len(examples[kind]) < 3:
+                examples[kind].append({
+                    "history": g.history(),
+                    "output": t,
+                    "parsed": raw,
+                })
+
+            if raw is None or len(raw) != WORD_LEN:
                 continue
             len5 += 1
             if raw in g.guesses:
@@ -173,6 +206,7 @@ def gate(
         "nd_reward": nd_reward / n_states,
         "nd_consist": nd_consist / n_states,
         "n_used": used / n_states,
+        "examples": examples,
     }
 
 def summarize(model_id: str, args) -> dict:

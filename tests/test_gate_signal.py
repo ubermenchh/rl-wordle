@@ -18,8 +18,8 @@ Run from the repo root: `uv run python -m tests.test_gate_signal`.
 """
 
 from gate import group_signal
-from reward import reward
-from wordle import Game
+from wordle_rl.reward import reward
+from wordle_rl.wordle import Game
 
 
 def _game() -> Game:

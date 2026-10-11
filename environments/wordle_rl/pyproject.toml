@@ -1,0 +1,17 @@
+[project]
+name = "wordle-rl"
+version = "0.1.0"
+description = "Wordle engine and verifiers taskset for RL training."
+# prime-rl uses Python 3.12, so this package must work on 3.12. The engine uses only the
+# standard library.
+requires-python = ">=3.11"
+dependencies = ["verifiers"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Hatch puts the word lists (answers.txt, allowed.txt) in the wheel with the .py files,
+# because they sit inside the package folder. wordle.py finds them next to itself.
+packages = ["wordle_rl"]

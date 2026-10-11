@@ -6,11 +6,27 @@ dependencies = [
     "accelerate>=1.14.0",
     "torch>=2.13.0",
     "transformers>=5.14.1",
+    # The Wordle engine and the verifiers taskset. The code is in environments/wordle_rl.
+    "wordle-rl",
 ]
+
+# One lock for the repo and the taskset package. Members install in editable mode, so a change
+# in environments/wordle_rl shows at once in the scripts and tests of the repo root.
+[tool.uv.workspace]
+members = ["environments/*"]
+
+[tool.uv.sources]
+wordle-rl = { workspace = true }
+# Same commit as the deps/verifiers submodule of prime-rl main (2026-10-09). PyPI 0.3.1 is 206
+# commits behind it, so its v1 API can differ from the API that prime-rl runs.
+# When we pin a prime-rl commit, change this rev to the submodule commit of that prime-rl.
+verifiers = { git = "https://github.com/PrimeIntellect-ai/verifiers", rev = "2cb0a6d33a49de0752bbcf9e9a139104da9f5bc4" }
 
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+# Tell the import sorter that wordle_rl is our own package and not a third-party one.
+src = [".", "environments/wordle_rl"]
 
 [tool.ruff.lint]
 # E/F: pycodestyle + pyflakes, I: import order, B: likely bugs.

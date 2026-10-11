@@ -13,8 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from render import _FEWSHOT_SPECS
-from wordle import ANSWERS, split_answers
+from wordle_rl.render import _FEWSHOT_SPECS
+from wordle_rl.wordle import ANSWERS, split_answers
 
 ROOT = Path(__file__).resolve().parent.parent
 # Only few-shot secrets that are in ANSWERS can ever be sampled as an eval secret (PLUMB is a
@@ -82,7 +82,7 @@ def _test_bad_inputs_raise():
 def _test_split_is_stable_across_processes():
     # str hashing is randomized per process. A split that draws from a set (or any
     # hash-ordered container) changes between runs, so eval words would drift from run to run.
-    code = "from wordle import split_answers; print(split_answers(seed=0)[1])"
+    code = "from wordle_rl.wordle import split_answers; print(split_answers(seed=0)[1])"
     outs = []
     for hashseed in ("1", "2"):
         env = {**os.environ, "PYTHONHASHSEED": hashseed}

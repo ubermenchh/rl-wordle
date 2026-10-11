@@ -78,7 +78,7 @@ def _test_trie_covers_pool():
     """Every pool word must be reachable and terminal -- catches tokenizer drift."""
     from transformers import AutoTokenizer
 
-    from wordle import ANSWERS
+    from wordle_rl.wordle import ANSWERS
 
     tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
     assert tok is not None

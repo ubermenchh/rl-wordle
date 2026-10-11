@@ -12,10 +12,11 @@ Run from the repo root: `uv run python -m tests.test_allowed_list`.
 
 from pathlib import Path
 
-import wordle
+import wordle_rl.wordle as wordle
 
 ROOT = Path(__file__).resolve().parent.parent
-ALLOWED_FILE = ROOT / "allowed.txt"
+# The file that wordle.py really reads: it sits next to the module inside the wordle_rl package.
+ALLOWED_FILE = Path(wordle.__file__).with_name("allowed.txt")
 SYSTEM_DICT_PREFIX = "/usr/share/dict"
 
 

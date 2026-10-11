@@ -59,11 +59,20 @@ image = (
     .env({"HF_HOME": f"{CKPT}/hf"})
     # LAST on purpose: these layers change on every code edit, and anything after them would
     # rebuild each time (PLAN.md §3.1: add_local_python_source last).
-    .add_local_python_source("wordle", "render", "reward", "evaluate")
-    # Beside the modules (/root), because wordle.py finds both lists via Path(__file__).with_name.
-    # Both are required: wordle.py raises at import if either is missing.
-    .add_local_file("answers.txt", "/root/answers.txt")
-    .add_local_file("allowed.txt", "/root/allowed.txt")
+    .add_local_python_source("wordle_rl", "evaluate", "gate", "constrained", "sft")
+    # Inside the package (/root/wordle_rl), because wordle.py finds both lists via
+    # Path(__file__).with_name. Both are required: wordle.py raises at import if either is missing.
+    # Note: I did not check if add_local_python_source ships .txt files, so we add them by hand.
+    # The parity_check entrypoint shows if the lists are the right size (8,511 allowed words).
+    .add_local_file(
+        "environments/wordle_rl/wordle_rl/answers.txt", "/root/wordle_rl/answers.txt"
+    )
+    .add_local_file(
+        "environments/wordle_rl/wordle_rl/allowed.txt", "/root/wordle_rl/allowed.txt"
+    )
+    # The SFT dataset is reproducible from a seed (python -m sft.gen_traces), 1.8 MB, so it ships
+    # with the image rather than living on the Volume.
+    .add_local_file("data/sft_train.jsonl", "/root/data/sft_train.jsonl")
 )
 
 
@@ -95,7 +104,7 @@ def smoke() -> dict:
     # 3. Our code made it into the image. ALLOWED size is the portability check: locally it is
     #    8,511 (macOS /usr/share/dict/words); a smaller number here means the remote image has no
     #    system dictionary and wordle.py silently fell back to the answer list alone.
-    import wordle
+    import wordle_rl.wordle as wordle
 
     info["answers"] = len(wordle.ANSWERS)
     info["allowed"] = len(wordle.ALLOWED)
@@ -132,7 +141,7 @@ def _baseline_table() -> dict:
 @app.function(image=image, timeout=300)
 def parity() -> dict:
     """CPU only: run the env self-tests and the baselines inside the Modal image."""
-    import wordle
+    import wordle_rl.wordle as wordle
 
     wordle.run_tests()  # raises on any failure, which fails the whole call
     return _baseline_table()
@@ -159,3 +168,280 @@ def main():
     for k, v in info.items():
         print(f"{k:>10}: {v}")
     print(f"{'read_back':>10}: {read_back.remote()}")
+
+
+# --- SFT -----------------------------------------------------------------------------------------
+# Full fine-tune of Qwen3-0.6B on the solver traces (data/sft_train.jsonl). These are STARTING values,
+# typical for a small full fine-tune, not tuned: read the loss curve on W&B before changing them.
+# Batch 4, not 16: logits are B x T x V floats and Qwen's vocab is ~152k, so batch 16 at ~300
+# tokens needed ~3 GB per logits copy and ran out of memory on the 22 GB A10 (measured 2026-10-03).
+SFT_BATCH_SIZE = 4
+SFT_EPOCHS = 2
+SFT_LR = 1e-5
+SFT_WARMUP_STEPS = 20
+SFT_MAX_GRAD_NORM = 1.0
+
+
+@app.function(
+    image=image,
+    gpu="A10",
+    volumes={CKPT: vol},
+    secrets=[wandb_secret],
+    timeout=3600,
+    # A preempted or failed attempt restarts from scratch. Fine for a run of minutes; the RL runs
+    # (hours) get real mid-run resume, because losing those costs money.
+    retries=modal.Retries(max_retries=2, initial_delay=0.0),
+    single_use_containers=True,
+)
+def sft(
+    run_name: str = "sft-solver-v1",
+    limit: int = 0,
+    init_model: str = MODEL,
+    hard_examples_name: str = "",
+    hard_repeats: int = 1,
+) -> dict:
+    """Train on the traces and save the bf16 weights to the Volume for the post-SFT gate."""
+    import json
+    import time
+
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    from sft.train_sft import build_example, train
+
+    vol.reload()
+    tok = AutoTokenizer.from_pretrained(init_model)
+    assert tok is not None and tok.pad_token_id is not None
+    # fp32 weights + bf16 autocast forward: bf16 weights would round away lr-sized updates.
+    model = AutoModelForCausalLM.from_pretrained(init_model, dtype=torch.float32)
+    model.to("cuda")  # ty: ignore[invalid-argument-type]
+    model.train()
+
+    examples = []
+
+    def append_row(row: dict) -> None:
+        messages = row["messages"]
+        target = f"<guess>{row['guess']}</guess>"
+        examples.append(build_example(tok, messages[1]["content"], target))
+
+    with open("/root/data/sft_train.jsonl") as f:
+        for line in f:
+            append_row(json.loads(line))
+
+    if hard_examples_name:
+        hard_path = Path(CKPT) / "sft" / hard_examples_name
+        with hard_path.open() as f:
+            for line in f:
+                row = json.loads(line)
+                for _ in range(hard_repeats):
+                    append_row(row)
+
+    if limit:
+        examples = examples[:limit]
+
+    config = {
+        "init_model": init_model, "n_examples": len(examples), "batch_size": SFT_BATCH_SIZE,
+        "epochs": SFT_EPOCHS, "lr": SFT_LR, "warmup_steps": SFT_WARMUP_STEPS,
+        "max_grad_norm": SFT_MAX_GRAD_NORM, "hard_examples_name": hard_examples_name,
+        "hard_repeats": hard_repeats,
+    }
+    run = init_wandb(run_name, config)
+
+    def log(r: dict) -> None:
+        run.log({f"sft/{k}": v for k, v in r.items() if k != "step"}, step=r["step"])
+
+    t0 = time.time()
+    records = train(
+        model, examples, tok.pad_token_id,
+        batch_size=SFT_BATCH_SIZE, epochs=SFT_EPOCHS, lr=SFT_LR,
+        warmup_steps=SFT_WARMUP_STEPS, max_grad_norm=SFT_MAX_GRAD_NORM,
+        autocast=True, log=log,
+    )
+    seconds = time.time() - t0
+
+    out = Path(CKPT) / "sft" / run_name
+    model.to(torch.bfloat16)  # ty: ignore[invalid-argument-type]
+    model.save_pretrained(out)  # bf16 is enough for inference; half the size
+    tok.save_pretrained(out)
+    vol.commit()
+
+    summary = {
+        "steps": len(records),
+        "first_loss": records[0]["loss"],
+        "last_loss": records[-1]["loss"],
+        "hard_examples_name": hard_examples_name,
+        "hard_repeats": hard_repeats,
+        "max_grad_norm_seen": max(r["grad_norm"] for r in records),
+        "seconds": round(seconds, 1),
+        "peak_gpu_gb": round(torch.cuda.max_memory_allocated() / 1e9, 1),
+        "saved_to": str(out),
+        "wandb_url": run.url,
+    }
+    run.finish()
+    return summary
+
+
+@app.local_entrypoint()
+def sft_run(
+    run_name: str = "sft-solver-v1",
+    init_model: str = MODEL,
+    limit: int = 0,
+    hard_examples_name: str = "",
+    hard_repeats: int = 1,
+):
+    """`limit=64` for a quick smoke run; no limit for the real one (use --detach)."""
+    for k, v in sft.spawn(
+        run_name, limit, init_model, hard_examples_name, hard_repeats
+    ).get().items():
+        print(f"{k:>20}: {v}")
+
+@app.function(image=image, gpu="A10", volumes={CKPT: vol}, timeout=1800)
+def mine_sft_errors(model_dir: str, out_name: str, per_prior: int = 100, k: int = 4) -> dict:
+    import json
+    import random
+
+    import gate as G
+    from wordle_rl.render import FEWSHOT_SECRETS
+    from wordle_rl.wordle import (
+        ALLOWED,
+        ANSWERS,
+        WORD_LEN,
+        Game,
+        constraints_from,
+        is_consistent,
+        split_answers,
+    )
+
+    _, eval_words = split_answers(
+        reserved=[w for w in FEWSHOT_SECRETS if w in ANSWERS]
+    )
+    eval_words = set(eval_words)
+    candidate_words = sorted(
+        word for word in ALLOWED
+        if word not in eval_words and len(word) == WORD_LEN and word.isalpha()
+    )
+    hard_prompt_count = 0
+
+    vol.reload()
+    tok, model = G.load(model_dir)
+
+    groups = {n: [] for n in range(5)}
+    with open("/root/data/sft_train.jsonl") as f:
+        for line in f:
+            row = json.loads(line)
+            groups[row["n_prior"]].append(row)
+
+    rng = random.Random(0)
+    selected = []
+    for rows in groups.values():
+        selected.extend(rng.sample(rows, min(per_prior, len(rows))))
+
+    hard_rows = []
+    failed_outputs = 0
+    for row in selected:
+        user_text = row["messages"][1]["content"]
+        prompt = G.build_prompt(tok, user_text)
+        outputs = G.sample_k(tok, model, prompt, k, 1.0, 128)
+
+        invalid = False
+        for output in outputs:
+            raw = G.parse_lenient(output)
+            if (
+                G.parse_tag(output) is None
+                or raw is None
+                or len(raw) != G.WORD_LEN
+                or raw not in G.ALLOWED
+            ):
+                invalid = True
+                failed_outputs += 1
+
+        if invalid:
+            hard_prompt_count += 1
+
+            if row["n_prior"] == 0:
+                hard_rows.append(row)
+                continue
+
+            game = Game(row["secret"])
+            for previous_guess in row["prior_guesses"]:
+                game.guess(previous_guess)
+
+            constraints = constraints_from(game)
+            alternatives = [
+                word for word in candidate_words
+                if word != row["guess"]
+                and word not in game.guesses
+                and is_consistent(word, constraints)
+            ]
+            for target in rng.sample(alternatives, min(2, len(alternatives))):
+                hard_rows.append({**row, "guess": target})
+
+    out = Path(CKPT) / "sft" / out_name
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w") as f:
+        for row in hard_rows:
+            f.write(json.dumps(row) + "\n")
+
+    vol.commit()
+    return {
+        "prompts_checked": len(selected),
+        "hard_prompt_count": hard_prompt_count,
+        "hard_targets": len(hard_rows),
+        "invalid_outputs": failed_outputs,
+        "saved_to": str(out),
+    }
+
+# --- Gate on a trained model -----------------------------------------------------------------------
+@app.function(
+    image=image, gpu="A10", volumes={CKPT: vol}, secrets=[wandb_secret], timeout=7200
+)
+def gate_sweep(model_dir: str, header: str, n_states: int = 100, k: int = 16, constrained: bool = False) -> str:
+    """The same sweep as the local base-model gate (strata 0-4, T=1.0, plain prompt), on the GPU."""
+    import gate as G
+
+    vol.reload()  # pick up weights written by an earlier container
+    tok, model = G.load(model_dir)
+    cols = ("tag", "len5", "valid", "repeat", "consistent", "solve", "nondegen", "nd_reward", "nd_consist")
+    lines = [header, "", "| prior | " + " | ".join(cols) + " |", "|" + "---|" * (len(cols) + 1)]
+    for n in range(5):
+        r = G.gate(model_dir, n, n_states, k, 1.0, 128, 0, tok, model, constrained=constrained)
+        lines.append(f"| {n} | " + " | ".join(f"{r[c]:.0%}" for c in cols) + " |")
+
+        for kind, samples in r["examples"].items():
+            if samples:
+                lines.append(f"\nExamples: prior={n}, type={kind}")
+                lines.extend(f"- {sample!r}" for sample in samples)
+
+    table = "\n".join(lines) + "\n"
+
+    mode_suffix = "-constrained" if constrained else ""
+    size_suffix = "" if n_states == 100 else f"-diagnostic-{n_states}"
+    artifact = f"gate{mode_suffix}{size_suffix}.md"
+    (Path(model_dir) / artifact).write_text(table)
+    vol.commit()
+    return table
+
+
+@app.local_entrypoint()
+def gate_run(run_name: str = "sft-v0-nopunct", n_states: int = 100, k: int = 16, constrained: bool = False):
+    """Gate a saved SFT model and write results/gate_<run_name>.md (tied to the current commit)."""
+    import subprocess
+
+    commit = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    dirty = subprocess.run(
+        ["git", "status", "--short"], capture_output=True, text=True
+    ).stdout.strip()
+    header = (
+        f"# Gate: {run_name} (A10, k={k}, {n_states} states per stratum, T=1.0, plain prompt)\n\n"
+        f"Code: commit `{commit}`" + (" (with uncommitted changes)" if dirty else "")
+    )
+    table = gate_sweep.spawn(f"{CKPT}/sft/{run_name}", header, n_states, k, constrained).get()
+
+    mode_suffix = "-constrained" if constrained else ""
+    size_suffix = "" if n_states == 100 else f"-diagnostic-{n_states}"
+    out = Path("results") / f"gate_{run_name}{mode_suffix}{size_suffix}.md"
+    out.write_text(table + "\n")
+    print(table)
+    print(f"\nwrote {out}")

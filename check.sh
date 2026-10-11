@@ -7,10 +7,11 @@
 set -e
 
 # In-module self-tests (the existing `_test_*` + `run_tests()` convention).
+# They live in the wordle_rl package now, so run them as modules (`-m`), not as scripts.
 # constrained.py and evaluate.py are left out: the first needs the HF cache, the second has none.
 for m in wordle render reward; do
-  echo "== $m"
-  uv run python "$m.py" test
+  echo "== wordle_rl.$m"
+  uv run python -m "wordle_rl.$m" test
 done
 
 # Separate test files (new tests live here, not inside user-owned modules).

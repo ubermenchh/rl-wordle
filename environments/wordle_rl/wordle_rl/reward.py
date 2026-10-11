@@ -13,8 +13,8 @@ import random
 import sys
 from itertools import pairwise
 
-from render import parse_tag
-from wordle import (
+from wordle_rl.render import parse_tag
+from wordle_rl.wordle import (
     ANSWERS,
     Game,
     InvalidGuess,
