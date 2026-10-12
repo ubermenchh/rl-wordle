@@ -1,0 +1,31 @@
+# SFT warm-start for the Wordle taskset (Mark II). Run by modal_prime_rl.py::sft_run.
+#
+# Data: data/sft_wordle/train.jsonl (2,000 rows, one `messages` column), made by
+# `uv run python -m sft.export_prime_rl`. It is copied into the image at /app/sft_data.
+# 2,000 rows / batch 64 = 31 steps for an epoch, so 62 steps are 2 epochs. The upstream Wordle
+# example runs 20 steps on its own data (examples/basic/wordle/sft.toml).
+max_steps = 62
+
+[ckpt] # Save a checkpoint at the end of training.
+
+[model]
+# The stock model, with thinking off (.jarvis/DECISIONS.md, 2026-10-11). Not the PrimeIntellect clone.
+name = "Qwen/Qwen3-1.7B"
+
+[data]
+name = "/app/sft_data"
+seq_len = 1024
+batch_size = 64
+micro_batch_size = 1
+
+[optim]
+lr = 1e-5
+
+# Measured on the Mac (renderers 0.1.12.dev19, tokenizer of Qwen3-1.7B): with true or with false the
+# renderer trains the same 65 tokens of a row: `<think>\n\n</think>\n\n`, the reasoning line and the
+# tag. The eval prompt ends with that wrapper (vLLM prefills it), so in training it is part of the
+# model's own output. We set false because it states our intent, and it keeps the stream the same if
+# the default changes. The effect on the final result of this difference was not tested.
+[renderer]
+name = "qwen3"
+enable_thinking = false

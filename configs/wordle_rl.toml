@@ -1,0 +1,61 @@
+# RL on the Wordle taskset (Mark III), starting from the SFT checkpoint. Run by
+# modal_prime_rl.py::rl_run, which sets the model (the converted SFT weights on the Volume) and the
+# run name on the command line. Key names follow prime-rl's own examples/basic/wordle/rl.toml.
+#
+# First run: 30 steps (DECISIONS: short run to check the signal and the speed before 100 steps).
+# Stop rules (.jarvis/ROADMAP.md, Mark III): fewer than 20 percent of groups with signal after 10
+# steps, or a flat reward after the steps.
+max_steps = 30
+seq_len = 2048 # A game of 6 turns is about 1.4k tokens: system prompt, 6 states, 6 short replies.
+
+# 2 GPUs: one for vLLM, one for the trainer. The upstream example uses 6 + 2.
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+
+[monitors.wandb]
+project = "rl-wordle"
+
+[ckpt]
+interval = 15 # A checkpoint at step 15 and at the end, so a failed run can resume.
+
+[model]
+name = "Qwen/Qwen3-1.7B" # Replaced by --model.name: the SFT weights.
+
+[orchestrator]
+batch_size = 128 # Rollouts for each step: 16 states x 8 samples.
+
+[orchestrator.train]
+group_size = 8 # Samples of the same state. RLOO and GRPO need more than 1; the upstream uses 16.
+
+# We do not set env.player.*: WordleEnvConfig has the null harness and the subprocess runtime
+# as its default (tests/test_env.py). The split is train (the default).
+[[orchestrator.train.source]]
+name = "wordle-rl"
+env.taskset.id = "wordle-rl"
+
+[orchestrator.train.sampling]
+max_completion_tokens = 256 # Per turn. The SFT replies are about 65 tokens.
+
+# A held-out eval every 5 steps (and at step 0, before the first update).
+[orchestrator.eval]
+interval = 5
+
+[orchestrator.eval.sampling]
+max_completion_tokens = 256
+
+[[orchestrator.eval.source]]
+name = "wordle-rl-heldout"
+select.limit = 100
+env.taskset.id = "wordle-rl"
+env.taskset.split = "eval" # Secrets that SFT and RL never use as a secret.
+
+[trainer.optim]
+lr = 3e-6 # The value of prime-rl's reverse-text example. Not tuned for Wordle.
+
+[inference]
+
+# Thinking off, as in the SFT config and the evals. The renderer builds the prompt of each turn.
+[orchestrator.renderer]
+name = "qwen3"
+enable_thinking = false

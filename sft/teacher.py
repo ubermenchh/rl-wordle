@@ -35,7 +35,7 @@ def explain(game: Game, guess: str) -> str:
         parts.append(f"Absent: {', '.join(absent)}")
 
     parts.append(f"{guess} fits all of this.")
-    return " ".join(parts)
+    return ". ".join(parts)
 
 def keep(game: Game, guess: str, eval_words: set[str]) -> bool:
     word = guess.strip().upper()
