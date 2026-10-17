@@ -20,6 +20,10 @@ Held-out secrets, 400 games. A game starts with 0 to 4 prior guesses and has 6 t
 
 Details: `results/final_table_2026-10-11.md`. Reward is not the win rate, so compare players on wins.
 
+Watch the model play one game (downloads 3.4 GB the first time):
+
+    uv run python -m scripts.play --seed 3
+
 ## Layout
 
 | Path | What |
@@ -29,6 +33,7 @@ Details: `results/final_table_2026-10-11.md`. Reward is not the win rate, so com
 | `configs/` | prime-rl configs: SFT, RL and evals |
 | `modal_prime_rl.py` | Modal functions: `sft_run`, `rl_run`, `eval_run` |
 | `scripts/baselines.py` | Random player and solver on the held-out tasks |
+| `scripts/play.py` | One game with the model from the Hub |
 | `tests/`, `check.sh` | Tests |
 | `results/` | Measured results of each run |
 
