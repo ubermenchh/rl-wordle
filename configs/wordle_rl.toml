@@ -33,6 +33,7 @@ group_size = 8 # Samples of the same state. RLOO and GRPO need more than 1; the 
 [[orchestrator.train.source]]
 name = "wordle-rl"
 env.taskset.id = "wordle-rl"
+env.taskset.seed = 1 # Run 2 (2026-10-17): a new task stream. Run 1 used the default, seed 0. The eval source keeps seed 0, so evals compare.
 
 [orchestrator.train.sampling]
 max_completion_tokens = 256 # Per turn. The SFT replies are about 65 tokens.
