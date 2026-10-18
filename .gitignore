@@ -6,3 +6,6 @@ data/
 wandb/
 # vf-eval writes one folder for each run (configs, traces, logs).
 outputs/
+
+# Local keys (PRIME_API_KEY, WANDB_API_KEY). Never commit.
+.env
