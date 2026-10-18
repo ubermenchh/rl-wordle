@@ -8,7 +8,15 @@ from verifiers.v1.harnesses.null import NullHarnessConfig
 
 from wordle_rl.render import FEWSHOT_SECRETS, SYSTEM, parse_tag, render
 from wordle_rl.reward import reward
-from wordle_rl.wordle import ANSWERS, constraints_from, Game, is_consistent, InvalidGuess, sample_state, split_answers
+from wordle_rl.wordle import (
+    ANSWERS,
+    Game,
+    InvalidGuess,
+    constraints_from,
+    is_consistent,
+    sample_state,
+    split_answers,
+)
 
 MAX_PRIOR = 4 # 0 to 4 prior guesses is the biggest lever
 
