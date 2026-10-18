@@ -536,10 +536,10 @@ def eval_run(ckpt_run: str, step: int, split: str = "eval", games: int = 100, ho
     gpu="A100-80GB:2",
     volumes={OUT: vol},
     secrets=[wandb_secret],
-    # The cost cap: 140 minutes of 2 GPUs, about $13 at $0.093 a minute. Run 1 took 48 minutes for
-    # 30 steps ($4.46) and about 77 minutes for the next 50 ($7.20), so 80 steps in one run need
-    # about 110 minutes (about $11.7). The cap must stay below the credit that is left.
-    timeout=8400,
+    # The cost cap: 70 minutes of 2 GPUs, about $6.5 at $0.093 a minute. It fits a 40-step test
+    # (run 2: 80 steps took about 110 minutes and $10.4). For 80 steps use 8400 (140 minutes, $13).
+    # The cap must stay below the credit that is left ($19.32 on 2026-10-18).
+    timeout=4200,
 )
 def rl_run(
     ckpt_run: str,

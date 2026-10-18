@@ -8,17 +8,19 @@ from verifiers.v1.harnesses.null import NullHarnessConfig
 
 from wordle_rl.render import FEWSHOT_SECRETS, SYSTEM, parse_tag, render
 from wordle_rl.reward import reward
-from wordle_rl.wordle import ANSWERS, Game, InvalidGuess, sample_state, split_answers
+from wordle_rl.wordle import ANSWERS, constraints_from, Game, is_consistent, InvalidGuess, sample_state, split_answers
 
 MAX_PRIOR = 4 # 0 to 4 prior guesses is the biggest lever
 
 class WordleData(vf.TaskData):
     secret: str
     priors: list[str]
+    shaping: float = 0.0 # weight of the bonus for earlier replies that fit the feedback
 
 class WordleConfig(vf.TasksetConfig):
     split: Literal["train", "eval"] = "train"
     seed: int = 0
+    shaping: float = 0.0
 
 def episode_reward(data: WordleData, replies: list[str]) -> float:
     """Reward of the whole game: the reward of the LAST reply, in the state before it.
@@ -32,9 +34,13 @@ def episode_reward(data: WordleData, replies: list[str]) -> float:
     game = Game(data.secret)
     for word in data.priors:
         game.guess(word)
+    earlier_fit = 0
     try:
         for reply in replies[:-1]:
-            game.guess(parse_tag(reply) or "")
+            # validate first: an illegal word raises here, as before.
+            word = game.validate(parse_tag(reply) or "")
+            earlier_fit += is_consistent(word, constraints_from(game))
+            game.guess(word)
     except InvalidGuess:
         return reward("", game)[0]
 
@@ -51,7 +57,11 @@ def episode_reward(data: WordleData, replies: list[str]) -> float:
     game_over = kind == "solved" or game.turns_used + 1 >= game.max_turns
     if legal and not game_over:
         return reward("", game)[0]
-    return score
+
+    # Subtle: the bonus is at most `shaping` (0.2), below the gap between a win (at least 1.08)
+    # and the best lost (0.3), so a win always beats a loss. max(..., 1) avoids dividing by 0
+    # for a game of one reply
+    return score + data.shaping * earlier_fit / max(len(replies) - 1, 1)
 
 class WordleTask(vf.Task[WordleData, vf.State, vf.TaskConfig]):
     # vf.reward marks the scoring function; reads whole trace with every message
@@ -104,6 +114,7 @@ class WordleTaskset(vf.Taskset[WordleTask, WordleConfig]):
                     system_prompt=SYSTEM,
                     secret=game.secret,
                     priors=list(game.guesses),
+                    shaping=self.config.shaping,
                 ),
                 self.config.task,
             )

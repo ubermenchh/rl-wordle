@@ -33,6 +33,7 @@ group_size = 8 # Samples of the same state. RLOO and GRPO need more than 1; the 
 [[orchestrator.train.source]]
 name = "wordle-rl"
 env.taskset.id = "wordle-rl"
+env.taskset.shaping = 0.2 # Run 3 (2026-10-18): a bonus for earlier replies that fit the feedback. Eval source: no shaping.
 env.taskset.seed = 1 # Run 2 (2026-10-17): a new task stream. Run 1 used the default, seed 0. The eval source keeps seed 0, so evals compare.
 
 [orchestrator.train.sampling]

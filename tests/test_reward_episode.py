@@ -22,15 +22,17 @@ def _tag(word: str) -> str:
     return f"<guess>{word}</guess>"
 
 
-def _data(priors: list[str]) -> WordleData:
+def _data(priors: list[str], shaping: float = 0.0) -> WordleData:
     game = Game(SECRET)
     for word in priors:
         game.guess(word)
-    return WordleData(name="test", prompt=render(game), secret=SECRET, priors=priors)
+    # Pass `shaping` only when it is set, so the older tests do not need the field.
+    extra = {"shaping": shaping} if shaping else {}
+    return WordleData(name="test", prompt=render(game), secret=SECRET, priors=priors, **extra)
 
 
-def _reward(priors: list[str], *replies: str) -> float:
-    return episode_reward(_data(priors), list(replies))
+def _reward(priors: list[str], *replies: str, shaping: float = 0.0) -> float:
+    return episode_reward(_data(priors, shaping), list(replies))
 
 
 def _is(value: float, expected: float) -> bool:
@@ -103,6 +105,69 @@ def _test_format_failure_is_the_worst_outcome():
         _reward([], _tag(SECRET)),
     ]
     assert min(others) > _reward([], "no tag at all")
+
+
+def _play(priors: list[str], kinds: str) -> list[str]:
+    """Replies for `kinds`: "c" = a consistent word, "i" = a legal word that breaks the feedback.
+    The engine picks the words, and each one is judged in the state before it."""
+    game = Game(SECRET)
+    for word in priors:
+        game.guess(word)
+    replies = []
+    for kind in kinds:
+        # All answers, not only grey ones: grey words use up the 21 free letters after 4 guesses.
+        # The secret is left out, because guessing it ends the game.
+        word = next(
+            w
+            for w in ANSWERS
+            if w != SECRET and w not in game.guesses and is_consistent(w, constraints_from(game)) == (kind == "c")
+        )
+        replies.append(_tag(word))
+        game.guess(word)
+    return replies
+
+
+# Shaping (Mark III, run 3): the reward of the last reply stays, and each EARLIER reply that fits
+# the feedback adds shaping / (number of earlier replies). Measured on 2026-10-18: only 18% to 23%
+# of the legal replies fit all feedback, and the old reward never looked at replies before the last.
+SHAPING = 0.2
+
+
+def _test_shaping_is_off_by_default():
+    priors = GREY[:3]
+    replies = _play(priors, "cic")  # 3 priors + 3 replies = 6 turns: the game is over
+    assert _is(_reward(priors, *replies), 0.3)
+
+
+def _test_each_earlier_consistent_reply_adds_its_share():
+    priors = GREY[:3]
+    replies = _play(priors, "cic")  # earlier replies: c, i -> 1 of 2 fits; the last one fits
+    assert _is(_reward(priors, *replies, shaping=SHAPING), 0.3 + SHAPING * 1 / 2)
+
+
+def _test_a_single_reply_gets_no_shaping():
+    priors = GREY[:5]
+    replies = _play(priors, "c")  # the last turn: no earlier reply
+    assert _is(_reward(priors, *replies, shaping=SHAPING), 0.3)
+
+
+def _test_a_win_still_beats_every_game_without_one():
+    priors = GREY[:4]
+    best_loss = _reward(priors, *_play(priors, "cc"), shaping=SHAPING)  # 0.3 + the full share
+    win = _reward(priors, *_play(priors, "c"), _tag(SECRET), shaping=SHAPING)
+    assert win > best_loss + 0.5, (win, best_loss)
+
+
+def _test_an_illegal_last_reply_keeps_the_share_of_the_earlier_ones():
+    priors = GREY[:2]
+    replies = _play(priors, "cc") + [_tag("ZZZZZ")]  # not a word: rung 0.0, both earlier fit
+    assert _is(_reward(priors, *replies, shaping=SHAPING), 0.0 + SHAPING)
+
+
+def _test_a_run_that_ends_early_gets_no_shaping():
+    priors = GREY[:2]
+    replies = _play(priors, "cc")  # legal, and the game is still open: scored as a format failure
+    assert _is(_reward(priors, *replies, shaping=SHAPING), -0.1)
 
 
 def run_tests():
